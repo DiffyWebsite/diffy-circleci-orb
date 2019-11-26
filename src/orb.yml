@@ -1,0 +1,121 @@
+version: 2.1
+description: |
+  Use CircleCI to trigger a Diffy compare job between two URLs. Maintained at https://github.com/DiffyWebsite/diffy-circleci-orb
+executors:
+  diffy_executor:
+    docker:
+      - image: circleci/php:7.3.9
+
+commands:
+  trigger_compare:
+    steps:
+      - run:
+          name: Run compare job and post a github comment
+          command: |
+            BUILD_DIR=$(pwd)
+            GITHUB_API_URL="https://api.github.com/repos/$CI_PROJECT_USERNAME/$CI_PROJECT_REPONAME"
+            if [ -z "$DIFFY_API_KEY" ]
+            then
+              echo "Diffy integration is not configured. Add DIFFY_API_KEY to CircleCI variables."
+              exit 1;
+            fi
+            if [ -z "$DIFFY_PROJECT_ID" ]
+            then
+              echo "Diffy integration is not configured. Add DIFFY_PROJECT_ID to CircleCI variables."
+              exit 1;
+            fi
+            LAST_GIT_COMMIT_MESSAGE=$(git log -1 --pretty=%B)
+            if [[ ${LAST_GIT_COMMIT_MESSAGE} == *"--skip-vr"* ]]
+            then
+                echo -e "\nVisual regression tests skipped because the last commit contains --skip-vr"
+                exit 0
+            fi
+            # Always run visual tests if "[vr]" is in the last commit message
+            if [[ ${LAST_GIT_COMMIT_MESSAGE} != *"[vr]"* ]]
+            then
+                exit 0
+            else
+                echo -e "\nRunning visual regression tests because the latest commit message demands it"
+            fi
+            # Ping the multidev environment to wake it from sleep
+            echo -e "\nPinging the ${TERMINUS_ENV} multidev environment to wake it from sleep..."
+            curl -I "$MULTIDEV_SITE_URL" >/dev/null
+            # Ping the live environment to wake it from sleep
+            echo -e "\nPinging the dev environment to wake it from sleep..."
+            curl -I "$DEV_SITE_URL" >/dev/null
+            # Get an access token from Diffy.
+            echo -e "\nGetting an access token from Diffy"
+            TOKEN=`curl -X POST "https://app.diffy.website/api/auth/key" -H "accept: application/json" -H "Content-Type: application/json" -d "{\"key\":\"$DIFFY_API_KEY\"}" | php -r 'echo json_decode(file_get_contents("php://stdin"))->token;'`
+            # Trigger a job to compare environments.
+            echo -e "\nCompare a build ${MULTIDEV_SITE_URL} with DEV environment..."
+            DIFF_ID=`curl -X POST "https://app.diffy.website/api/projects/$DIFFY_PROJECT_ID/compare" -H "Accept: application/json" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "{\"env1\":\"dev\",\"env2\":\"custom\",\"env2Url\":\"${MULTIDEV_SITE_URL}\"}"`
+            sleep 30
+            DIFF_STATE=''
+            while [ "$DIFF_STATE" != "4" ] && [ "$DIFF_STATE" != "3" ] && [ "$DIFF_STATE" != "2" ]
+            do
+              echo -e "\nChecking status of the diff $DIFF_ID"
+              DIFF_INFO=`curl -X GET "https://app.diffy.website/api/diffs/$DIFF_ID" -H "Accept: application/json" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json"`
+              echo -e "\n Result of the check: $DIFF_INFO"
+              DIFF_STATE=`echo $DIFF_INFO | php -r 'echo json_decode(file_get_contents("php://stdin"))->state;'`
+              echo -e "\n Diff completed? $DIFF_STATE"
+              sleep 5
+            done
+            CHANGES=`echo $DIFF_COMPLETED | php -r 'echo json_decode(file_get_contents("php://stdin"))->result;'`
+            echo "Diff result: $CHANGES"
+            if [ "$CHANGES" == "0" ]
+            then
+              # visual regression passed
+              echo -e "\n\nVisual regression test passed! No changes found."
+              PR_MESSAGE="Diffy visual regression test passed! No changes found."
+            else
+              # visual regression failed
+              echo -e "\nVisual regression test failed!"
+              REPORT_LINK="https://app.diffy.website/#/diffs/$DIFF_ID"
+              PR_MESSAGE="Diffy visual regression test failed! $REPORT_LINK"
+            fi
+            # Post the image back to the pull request on GitHub
+            if [[ -n ${CI_REPOSITORY_URL} && ${CI_REPOSITORY_URL} == *"github"* ]]
+            then
+                echo -e "\nPosting visual regression results back to PR #$PR_NUMBER "
+                curl -s -i -u "$CI_PROJECT_USERNAME:$GITHUB_TOKEN" -d "{\"body\": \"$PR_MESSAGE\"}" $GITHUB_API_URL/issues/$PR_NUMBER/comments > /dev/null
+            fi
+            if [ "$CHANGES" != "0" ]
+            then
+                echo -e "\n\nExit 1. Changes found."
+                exit 1
+            fi
+
+
+
+
+jobs:
+  compare_multidev_dev:
+    executor: diffy_executor
+    steps:
+      - checkout
+      - attach_workspace:
+          at: /tmp/workspace
+
+      - run: cp /tmp/workspace/bash_env.txt $BASH_ENV
+      - run: echo "export CI_BUILD_URL='${CIRCLE_BUILD_URL}'" >> $BASH_ENV
+      - run: echo "export CI_NODE_INDEX='${CIRCLE_NODE_INDEX}'" >> $BASH_ENV
+      - run: echo "export CI_REPOSITORY_URL='${CIRCLE_REPOSITORY_URL}'" >> $BASH_ENV
+      - run: echo "export ARTIFACTS_DIR_URL='${CIRCLE_BUILD_URL}/artifacts/${CIRCLE_NODE_INDEX}/artifacts'" >> $BASH_ENV
+      - run: source $BASH_ENV
+      - trigger_compare
+
+examples:
+  compare:
+    description: Compare two URLs and post a message back to Github
+    usage:
+      version: 2.1
+      workflows:
+        version: 2.1
+        visual_regression_testing:
+          jobs:
+            - diffy/compare_multidev_dev
+      orbs:
+        diffy: diffy/diffy@1.0
+
+
+
