@@ -1,14 +1,22 @@
 # Diffy CircleCI Orb
 
-Repository contains code for Diffy [CircleCI Orb](https://circleci.com/docs/2.0/orb-intro/).
+[Diffy](https://diffy.website) is a visual regression testing platform for websites.
+
+
+Repository contains code for Diffy's [CircleCI Orb](https://circleci.com/docs/2.0/orb-intro/).
+
+CircleCI registry https://circleci.com/orbs/registry/orb/diffy/diffy.
 
 Orb provides a job to compare Pantheon's DEV environment with Multi Dev. This job is a replacement of
-BackstopJS visual regression job in [Pantheon Build Tools workflow](https://pantheon.io/docs/guides/build-tools).
+BackstopJS visual regression job in [Pantheon Build Tools workflow](https://pantheon.io/docs/guides/build-tools). 
 
 Once you have set up a project by using [Drops 8 workflow](https://github.com/pantheon-systems/example-drops-8-composer) you can use
 Diffy to run visual regression testing.
 
-For that you need to configure CircleCI environment variables. Check [documentation page](https://diffy.website/documentation/pantheon-build-tools).
+Accept "[Allow Uncertified Orbs](https://circleci.com/docs/2.0/orbs-faq/#using-3rd-party-orbs)" under your Organization Security settings in CircleCI.
+This can be done in `https://circleci.com/gh/organizations/YOUR_USERNAME_OR_ORGNAME/settings#security`
+
+Configure CircleCI environment variables. Check [documentation page](https://diffy.website/documentation/pantheon-build-tools).
 
 Once variables are configured you need to edit your `.circleci/config.yml` file.
 
