@@ -4,7 +4,7 @@ description: |
 executors:
   diffy_executor:
     docker:
-      - image: circleci/php:8.1.21
+      - image: cimg/php:8.1.21
 
 commands:
   trigger_compare:
