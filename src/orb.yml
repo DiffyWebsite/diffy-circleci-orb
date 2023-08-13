@@ -4,7 +4,7 @@ description: |
 executors:
   diffy_executor:
     docker:
-      - image: circleci/php:7.3.9
+      - image: circleci/php:8.1.21
 
 commands:
   trigger_compare:
@@ -43,50 +43,16 @@ commands:
             # Ping the live environment to wake it from sleep
             echo -e "\nPinging the dev environment to wake it from sleep..."
             curl -I "$DEV_SITE_URL" >/dev/null
-            # Get an access token from Diffy.
-            echo -e "\nGetting an access token from Diffy"
-            TOKEN=`curl -X POST "https://app.diffy.website/api/auth/key" -H "accept: application/json" -H "Content-Type: application/json" -d "{\"key\":\"$DIFFY_API_KEY\"}" | php -r 'echo json_decode(file_get_contents("php://stdin"))->token;'`
-            # Trigger a job to compare environments.
-            echo -e "\nCompare a build ${MULTIDEV_SITE_URL} with DEV environment..."
-            DIFF_ID=`curl -X POST "https://app.diffy.website/api/projects/$DIFFY_PROJECT_ID/compare" -H "Accept: application/json" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "{\"env1\":\"dev\",\"env2\":\"custom\",\"env2Url\":\"${MULTIDEV_SITE_URL}\"}"`
-            sleep 30
-            DIFF_STATE=''
-            while [ "$DIFF_STATE" != "4" ] && [ "$DIFF_STATE" != "3" ] && [ "$DIFF_STATE" != "2" ]
-            do
-              echo -e "\nChecking status of the diff $DIFF_ID"
-              DIFF_INFO=`curl -X GET "https://app.diffy.website/api/diffs/$DIFF_ID" -H "Accept: application/json" -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json"`
-              echo -e "\n Result of the check: $DIFF_INFO"
-              DIFF_STATE=`echo $DIFF_INFO | php -r 'echo json_decode(file_get_contents("php://stdin"))->state;'`
-              echo -e "\n Diff completed? $DIFF_STATE"
-              sleep 5
-            done
-            CHANGES=`echo $DIFF_COMPLETED | php -r 'echo json_decode(file_get_contents("php://stdin"))->result;'`
-            echo "Diff result: $CHANGES"
-            if [ "$CHANGES" == "0" ]
-            then
-              # visual regression passed
-              echo -e "\n\nVisual regression test passed! No changes found."
-              PR_MESSAGE="Diffy visual regression test passed! No changes found."
-            else
-              # visual regression failed
-              echo -e "\nVisual regression test failed!"
-              REPORT_LINK="https://app.diffy.website/#/diffs/$DIFF_ID"
-              PR_MESSAGE="Diffy visual regression test failed! $REPORT_LINK"
-            fi
-            # Post the image back to the pull request on GitHub
-            if [[ -n ${CI_REPOSITORY_URL} && ${CI_REPOSITORY_URL} == *"github"* ]]
-            then
-                echo -e "\nPosting visual regression results back to PR #$PR_NUMBER "
-                curl -s -i -u "$CI_PROJECT_USERNAME:$GITHUB_TOKEN" -d "{\"body\": \"$PR_MESSAGE\"}" $GITHUB_API_URL/issues/$PR_NUMBER/comments > /dev/null
-            fi
-            if [ "$CHANGES" != "0" ]
-            then
-                echo -e "\n\nExit 1. Changes found."
-                exit 1
-            fi
-
-
-
+            
+            # Download Diffy-CLI.
+            wget https://github.com/diffywebsite/diffy-cli/releases/latest/download/diffy.phar
+            
+            // Authenticate.
+            php diffy.phar auth:login $DIFFY_API_KEY
+            
+            // Compare with commit sha so Diffy's github check posts the results.
+            LAST_GIT_COMMIT_HASH=$(git log -1 --pretty=%H)
+            php diffy.phar project:compare $DIFFY_PROJECT_ID dev custom --env2Url="${MULTIDEV_SITE_URL}" --commit-sha="${LAST_GIT_COMMIT_HASH}"
 
 jobs:
   compare_multidev_dev:
